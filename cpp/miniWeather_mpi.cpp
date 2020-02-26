@@ -525,26 +525,6 @@ void set_MPI_halo_values_z( double *state ) {
 
   for (ll=0; ll<NUM_VARS; ll++) {
     for (i=0; i<nx+2*hs; i++) {
-      if (ll == ID_WMOM) {
-        state[ll*(nz+2*hs)*(nx+2*hs) + (0      )*(nx+2*hs) + i] = 0.;
-        state[ll*(nz+2*hs)*(nx+2*hs) + (1      )*(nx+2*hs) + i] = 0.;
-        state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs  )*(nx+2*hs) + i] = 0.;
-        state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs+1)*(nx+2*hs) + i] = 0.;
-        //Impose the vertical momentum effects of an artificial cos^2 mountain at the lower boundary
-        if (data_spec_int == DATA_SPEC_MOUNTAIN) {
-          x = (i_beg+i-hs+0.5)*dx;
-          if ( fabs(x-xlen/4) < mnt_width ) {
-            xloc = (x-(xlen/4)) / mnt_width;
-            //Compute the derivative of the fake mountain
-            mnt_deriv = -pi*cos(pi*xloc/2)*sin(pi*xloc/2)*10/dx;
-            //w = (dz/dx)*u
-            state[ID_WMOM*(nz+2*hs)*(nx+2*hs) + (0)*(nx+2*hs) + i] = mnt_deriv*state[ID_UMOM*(nz+2*hs)*(nx+2*hs) +
-										     hs*(nx+2*hs) + i];
-            state[ID_WMOM*(nz+2*hs)*(nx+2*hs) + (1)*(nx+2*hs) + i] = mnt_deriv*state[ID_UMOM*(nz+2*hs)*(nx+2*hs) +
-										     hs*(nx+2*hs) + i];
-          }
-	}
-      }
       sendbuf_d[ll*(nx+(2*hs))+i]                       = state[ll*(nz+2*hs)*(nx+2*hs) + (hs     )*(nx+2*hs) + i];
       sendbuf_d[NUM_VARS*(nx+(2*hs))+ ll*(nx+(2*hs))+i] = state[ll*(nz+2*hs)*(nx+2*hs) + (hs + 1 )*(nx+2*hs) + i];
       // up buffers
@@ -650,7 +630,7 @@ void init( int *argc , char ***argv ) {
   MPI_Dims_create(nranks, ndims, dims);
 
   if( myrank == 0 )
-    printf("PW[%d]/[%d]: PEdims = [%d,%d] \n", myrank, nranks, dims[0],dims[1]);
+    printf("World of [%d] ranks: dims = [%d,%d] \n", nranks, dims[0],dims[1]);
   
   /* create cartesian mapping */
 
@@ -673,15 +653,17 @@ void init( int *argc , char ***argv ) {
  
   //TODO : 2D decomposition of the mesh!!!!
   nper = ( (double) nx_glob ) / dims[0];
-  i_beg = round( nper* (myrank)    );
-  i_end = round( nper*((myrank)+1) )-1;
+  i_beg = round( nper* coord[0]   );
+  i_end = round( nper*(coord[0] + 1 ))-1;
   nx = i_end - i_beg + 1;
 
-  nper = ( (double) nz_glob ) / dims[1];
-  k_beg = round( nper* (myrank)    );
-  k_end = round( nper*((myrank)+1) )-1;
+  int nperz = ( (double) nz_glob ) / dims[1];
+  k_beg = round( nperz* (coord[1])    );
+  k_end = round( nperz*((coord[1])+1) )-1;
   nz = k_end - k_beg + 1;
-  printf( "rank [%d] --> nx = %d,nz = %d\n", myrank,nx,nz );fflush(stdout);
+  printf( "rank %d [%d,%d]--> nx = %d [%d - %d],nz = %d [%d - %d]\n", myrank,coord[0],coord[1],
+	  nx,i_beg,i_end, nz,k_beg,k_end );
+  fflush(stdout);
 
  
   ////////////////////////////////////////////////////////////////////////////////
