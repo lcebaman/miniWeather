@@ -4,7 +4,7 @@
 ##########################################################
 CC := mpiicpc
 CFLAGS := -O3
-PNETCDF_PATH=/lustre/home/z04/lcebaman/PnetCDF
+PNETCDF_PATH=/lustre/home/z04/lcebaman/libs/PnetCDF
 INCLUDE := -I${PNETCDF_PATH}/include
 LDFLAGS := -L${PNETCDF_PATH}/lib -lpnetcdf -L${LAPACK_PATH}/lib
 OMPFLAGS := -mp

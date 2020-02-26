@@ -16,6 +16,7 @@
 #include "pnetcdf.h"
 #include <unistd.h>
 
+// Physics constants
 const double pi        = 3.14159265358979323846264338327;   //Pi
 const double grav      = 9.8;                               //Gravitational acceleration (m / s^2)
 const double cp        = 1004.;                             //Specific heat of dry air at constant pressure
@@ -24,6 +25,7 @@ const double rd        = 287.;                              //Dry air constant f
 const double p0        = 1.e5;                              //Standard pressure at the surface in Pascals
 const double C0        = 27.5629410929725921310572974482;   //Constant to translate potential temperature into pressure (P=C0*(rho*theta)**gamma)
 const double gamm      = 1.40027894002789400278940027894;   //gamma=cp/Rd , have to call this gamm because "gamma" is taken (I hate C so much)
+
 //Define domain and stability-related constants
 const double xlen      = 2.e4;   //Length of the domain in the x-direction (meters)
 const double zlen      = 1.e4;   //Length of the domain in the z-direction (meters)
@@ -49,8 +51,10 @@ const int DATA_SPEC_DENSITY_CURRENT = 5;
 const int DATA_SPEC_INJECTION       = 6;
 
 const int nqpoints = 3;
-double qpoints [] = { 0.112701665379258311482073460022E0 , 0.500000000000000000000000000000E0 , 0.887298334620741688517926539980E0 };
-double qweights[] = { 0.277777777777777777777777777779E0 , 0.444444444444444444444444444444E0 , 0.277777777777777777777777777779E0 };
+double qpoints [] = { 0.112701665379258311482073460022E0 , 0.500000000000000000000000000000E0 ,
+		      0.887298334620741688517926539980E0 };
+double qweights[] = { 0.277777777777777777777777777779E0 , 0.444444444444444444444444444444E0 ,
+		      0.277777777777777777777777777779E0 };
 
 ///////////////////////////////////////////////////////////////////////////////////////
 // Variables that are initialized but remain static over the coure of the simulation
@@ -64,6 +68,7 @@ int    nx_glob, nz_glob;      //Number of total grid cells in the x- and z- dime
 int    i_beg, k_beg;          //beginning index in the x- and z-directions for this MPI task
 int    nranks, myrank;        //Number of MPI ranks and my rank id
 int    left_rank, right_rank; //MPI Rank IDs that exist to my left and right in the global domain
+int    down_rank, up_rank;    //MPI Rank IDs that exist to my down and up in the global domain
 int    masterproc;            //Am I the master process (rank == 0)?
 double data_spec_int;         //Which data initialization to use
 double *hy_dens_cell;         //hydrostatic density (vert cell avgs).   Dimensions: (1-hs:nz+hs)
@@ -86,14 +91,19 @@ double *sendbuf_l;            //Buffer to send data to the left MPI rank
 double *sendbuf_r;            //Buffer to send data to the right MPI rank
 double *recvbuf_l;            //Buffer to receive data from the left MPI rank
 double *recvbuf_r;            //Buffer to receive data from the right MPI rank
+double *sendbuf_u;            //Buffer to send data to above (up) MPI rank
+double *sendbuf_d;            //Buffer to send data to below (down) MPI rank
+double *recvbuf_u;            //Buffer to receive data from above(up) MPI rank
+double *recvbuf_d;            //Buffer to receive data from below (down) MPI rank
 double *sendbuf;
 double *recvbuf;
 //Buffer to send data to the left MPI rank
 int    num_out = 0;           //The number of outputs performed so far
 int    direction_switch = 1;
 double mass0, te0;            //Initial domain totals for mass and total energy  
-double mass , te ;            //Domain totals for mass and total energy  
-MPI_Comm comm1D;
+double mass , te ;            //Domain totals for mass and total energy
+int    ndims  = 2;
+MPI_Comm comm1D, comm2D;
 
 //How is this not in the standard?!
 double dmin( double a , double b ) { if (a<b) {return a;} else {return b;} };
@@ -102,26 +112,34 @@ double dmin( double a , double b ) { if (a<b) {return a;} else {return b;} };
 //Declaring the functions defined after "main"
 void   init                 ( int *argc , char ***argv );
 void   finalize             ( );
-void   injection            ( double x , double z , double &r , double &u , double &w , double &t , double &hr , double &ht );
-void   density_current      ( double x , double z , double &r , double &u , double &w , double &t , double &hr , double &ht );
-void   turbulence           ( double x , double z , double &r , double &u , double &w , double &t , double &hr , double &ht );
-void   mountain_waves       ( double x , double z , double &r , double &u , double &w , double &t , double &hr , double &ht );
-void   thermal              ( double x , double z , double &r , double &u , double &w , double &t , double &hr , double &ht );
-void   collision            ( double x , double z , double &r , double &u , double &w , double &t , double &hr , double &ht );
+void   injection            ( double x , double z , double &r , double &u , double &w , double &t , double &hr ,
+			      double &ht );
+void   density_current      ( double x , double z , double &r , double &u , double &w , double &t , double &hr ,
+			      double &ht );
+void   turbulence           ( double x , double z , double &r , double &u , double &w , double &t , double &hr ,
+			      double &ht );
+void   mountain_waves       ( double x , double z , double &r , double &u , double &w , double &t , double &hr ,
+			      double &ht );
+void   thermal              ( double x , double z , double &r , double &u , double &w , double &t , double &hr ,
+			      double &ht );
+void   collision            ( double x , double z , double &r , double &u , double &w , double &t , double &hr ,
+			      double &ht );
 void   hydro_const_theta    ( double z                   , double &r , double &t );
 void   hydro_const_bvfreq   ( double z , double bv_freq0 , double &r , double &t );
-double sample_ellipse_cosine( double x , double z , double amp , double x0 , double z0 , double xrad , double zrad );
+double sample_ellipse_cosine( double x , double z , double amp , double x0 , double z0 , double xrad ,
+			      double zrad );
 void   output               ( double *state , double etime );
 void   ncwrap               ( int ierr , int line );
 void   perform_timestep     ( double *state , double *state_tmp , double *flux , double *tend , double dt );
-void   semi_discrete_step   ( double *state_init , double *state_forcing , double *state_out , double dt , int dir , double *flux , double *tend );
+void   semi_discrete_step   ( double *state_init , double *state_forcing , double *state_out , double dt ,
+			      int dir , double *flux , double *tend );
 void   compute_tendencies_x ( double *state , double *flux , double *tend );
 void   compute_tendencies_z ( double *state , double *flux , double *tend );
 void   set_halo_values_x    ( double *state );
 void   set_exchange_halo_values_x    ( double *state );
 
 void   set_halo_values_z    ( double *state );
-void   set_MPI_halo_values_z    ( double *state );
+void   set_MPI_halo_values_z( double *state );
 void   reductions           ( double &mass , double &te );
 
 
@@ -227,13 +245,13 @@ void semi_discrete_step( double *state_init , double *state_forcing , double *st
   int i, k, ll, inds, indt;
   if        (dir == DIR_X) {
     //Set the halo values for this MPI task's fluid state in the x-direction
-    //set_halo_values_x(state_forcing);
-    set_exchange_halo_values_x(state_forcing);
+    set_halo_values_x(state_forcing);
+    //set_exchange_halo_values_x(state_forcing);
     //Compute the time tendencies for the fluid state in the x-direction
     compute_tendencies_x(state_forcing,flux,tend);
   } else if (dir == DIR_Z) {
     //Set the halo values for this MPI task's fluid state in the z-direction
-    set_halo_values_z(state_forcing);
+    set_MPI_halo_values_z(state_forcing);
     //Compute the time tendencies for the fluid state in the z-direction
     compute_tendencies_z(state_forcing,flux,tend);
   }
@@ -388,8 +406,8 @@ void set_halo_values_x( double *state ) {
   MPI_Request req_r[2], req_s[2];
 
   //Prepost receives
-  ierr = MPI_Irecv(recvbuf_l,hs*nz*NUM_VARS,MPI_DOUBLE, left_rank,0,comm1D,&req_r[0]);
-  ierr = MPI_Irecv(recvbuf_r,hs*nz*NUM_VARS,MPI_DOUBLE,right_rank,1,comm1D,&req_r[1]);
+  ierr = MPI_Irecv(recvbuf_l,hs*nz*NUM_VARS,MPI_DOUBLE, left_rank,0,comm2D,&req_r[0]);
+  ierr = MPI_Irecv(recvbuf_r,hs*nz*NUM_VARS,MPI_DOUBLE,right_rank,1,comm2D,&req_r[1]);
 
   //Pack the send buffers
   for (ll=0; ll<NUM_VARS; ll++) {
@@ -402,8 +420,8 @@ void set_halo_values_x( double *state ) {
   }
 
   //Fire off the sends
-  ierr = MPI_Isend(sendbuf_l,hs*nz*NUM_VARS,MPI_DOUBLE, left_rank,1,comm1D,&req_s[0]);
-  ierr = MPI_Isend(sendbuf_r,hs*nz*NUM_VARS,MPI_DOUBLE,right_rank,0,comm1D,&req_s[1]);
+  ierr = MPI_Isend(sendbuf_l,hs*nz*NUM_VARS,MPI_DOUBLE, left_rank,1,comm2D,&req_s[0]);
+  ierr = MPI_Isend(sendbuf_r,hs*nz*NUM_VARS,MPI_DOUBLE,right_rank,0,comm2D,&req_s[1]);
 
   //Wait for receives to finish
   ierr = MPI_Waitall(2,req_r,MPI_STATUSES_IGNORE);
@@ -460,7 +478,7 @@ void set_exchange_halo_values_x( double *state ) {
   }
 
   
-  MPI_Neighbor_alltoallv( sendbuf, counts, displs, MPI_DOUBLE, recvbuf, counts, displs, MPI_DOUBLE, comm1D );
+  MPI_Neighbor_alltoallv( sendbuf, counts, displs, MPI_DOUBLE, recvbuf, counts, displs, MPI_DOUBLE, comm2D );
   
   
   //Unpack the receive buffers
@@ -494,13 +512,17 @@ void set_exchange_halo_values_x( double *state ) {
 //Set this MPI task's halo values in the z-direction.
 //decomposition in the vertical direction
 void set_MPI_halo_values_z( double *state ) {
-  int          i, ll;
+  int          i, ll,ierr;
   const double mnt_width = xlen/8;
   double       x, xloc, mnt_deriv;
 
-  /////////////////////////////////////////////////
-  // TODO: THREAD ME
-  /////////////////////////////////////////////////
+  MPI_Request req_r[2], req_s[2];
+  
+  //Preepost receives
+  ierr = MPI_Irecv(recvbuf_d, hs*(nx+hs*2)*NUM_VARS,MPI_DOUBLE, down_rank ,0,comm2D,&req_r[0]);
+  ierr = MPI_Irecv(recvbuf_u, hs*(nx+hs*2)*NUM_VARS,MPI_DOUBLE,   up_rank ,1,comm2D,&req_r[1]);
+
+
   for (ll=0; ll<NUM_VARS; ll++) {
     for (i=0; i<nx+2*hs; i++) {
       if (ll == ID_WMOM) {
@@ -521,15 +543,35 @@ void set_MPI_halo_values_z( double *state ) {
             state[ID_WMOM*(nz+2*hs)*(nx+2*hs) + (1)*(nx+2*hs) + i] = mnt_deriv*state[ID_UMOM*(nz+2*hs)*(nx+2*hs) +
 										     hs*(nx+2*hs) + i];
           }
-        }
-      } else {
-        state[ll*(nz+2*hs)*(nx+2*hs) + (0      )*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (hs     )*(nx+2*hs) + i];
-        state[ll*(nz+2*hs)*(nx+2*hs) + (1      )*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (hs     )*(nx+2*hs) + i];
-        state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs  )*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs-1)*(nx+2*hs) + i];
-        state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs+1)*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs-1)*(nx+2*hs) + i];
+	}
       }
+      sendbuf_d[ll*(nx+(2*hs))+i]                       = state[ll*(nz+2*hs)*(nx+2*hs) + (hs     )*(nx+2*hs) + i];
+      sendbuf_d[NUM_VARS*(nx+(2*hs))+ ll*(nx+(2*hs))+i] = state[ll*(nz+2*hs)*(nx+2*hs) + (hs + 1 )*(nx+2*hs) + i];
+      // up buffers
+      sendbuf_u[ll*(nx+(2*hs))+i]                       = state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs-2)*(nx+2*hs) + i];
+      sendbuf_u[NUM_VARS*(nx+(2*hs))+ ll*(nx+(2*hs))+i] = state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs-1)*(nx+2*hs) + i];
     }
   }
+  
+  ierr = MPI_Isend(sendbuf_d, hs*(nx+hs*2)*NUM_VARS, MPI_DOUBLE, down_rank,1,comm2D,&req_s[0]);
+  ierr = MPI_Isend(sendbuf_u, hs*(nx+hs*2)*NUM_VARS, MPI_DOUBLE,   up_rank,0,comm2D,&req_s[1]);
+  
+  //Wait for receives to finish
+  ierr = MPI_Waitall(2,req_r,MPI_STATUSES_IGNORE);
+  
+  //Unpack the receive buffers
+  for (ll=0; ll<NUM_VARS; ll++) {
+    for (i=0; i<nx+2*hs; i++) {
+      state[ll*(nz+2*hs)*(nx+2*hs) + (0  )*(nx+2*hs) + i] = recvbuf_d[                       ll*(nx+(2*hs))+i];
+      state[ll*(nz+2*hs)*(nx+2*hs) + (1  )*(nx+2*hs) + i] = recvbuf_d[NUM_VARS*(nx+(2*hs)) + ll*(nx+(2*hs))+i];
+      state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs  )*(nx+2*hs) + i] = recvbuf_u[                       ll*(nx+(2*hs))+i];
+      state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs+1)*(nx+2*hs) + i] = recvbuf_u[NUM_VARS*(nx+(2*hs)) + ll*(nx+(2*hs))+i];
+    }
+  }
+
+  //Wait for sends to finish
+  ierr = MPI_Waitall(2,req_s,MPI_STATUSES_IGNORE);
+  
 }
 
 //Set this MPI task's halo values in the z-direction. This does not require MPI because there is no MPI
@@ -563,10 +605,14 @@ void set_halo_values_z( double *state ) {
           }
         }
       } else {
-        state[ll*(nz+2*hs)*(nx+2*hs) + (0      )*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (hs     )*(nx+2*hs) + i];
-        state[ll*(nz+2*hs)*(nx+2*hs) + (1      )*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (hs     )*(nx+2*hs) + i];
-        state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs  )*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs-1)*(nx+2*hs) + i];
-        state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs+1)*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs-1)*(nx+2*hs) + i];
+        state[ll*(nz+2*hs)*(nx+2*hs) + (0      )*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (hs     )*
+									(nx+2*hs) + i];
+        state[ll*(nz+2*hs)*(nx+2*hs) + (1      )*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (hs     )*
+									(nx+2*hs) + i];
+        state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs  )*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs-1)*
+									(nx+2*hs) + i];
+        state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs+1)*(nx+2*hs) + i] = state[ll*(nz+2*hs)*(nx+2*hs) + (nz+hs-1)*
+									(nx+2*hs) + i];
       }
     }
   }
@@ -574,7 +620,7 @@ void set_halo_values_z( double *state ) {
 
 
 void init( int *argc , char ***argv ) {
-  int    i, k, ii, kk, ll, ierr, inds, i_end;
+  int    i, k, ii, kk, ll, ierr, inds, i_end,k_end;
   double x, z, r, u, w, t, hr, ht, nper;
   int my_cart_rank;
 
@@ -587,39 +633,57 @@ void init( int *argc , char ***argv ) {
   ierr = MPI_Comm_size(MPI_COMM_WORLD,&nranks);
   ierr = MPI_Comm_rank(MPI_COMM_WORLD,&myrank);
   
-  nper = ( (double) nx_glob ) / nranks;
+  // nper = ( (double) nx_glob ) / nranks;
+  // i_beg = round( nper* (myrank)    );
+  // i_end = round( nper*((myrank)+1) )-1;
+  // nx = i_end - i_beg + 1;
+  
+  int dims[ndims],coord[ndims];
+  int periods[2] = {true, false}; // set periodicity .true. in X .false. in Z
+  
+  for(int i=0;i<ndims;i++){
+    dims[i] = 0;
+    coord[i] = 0;  
+  }
+  
+  
+  MPI_Dims_create(nranks, ndims, dims);
+
+  if( myrank == 0 )
+    printf("PW[%d]/[%d]: PEdims = [%d,%d] \n", myrank, nranks, dims[0],dims[1]);
+  
+  /* create cartesian mapping */
+
+  int reorder = 1;
+  
+  MPI_Cart_create(MPI_COMM_WORLD, ndims, dims, periods, reorder, &comm2D);
+
+  /* find my coordinates in the cartesian communicator group */
+  MPI_Cart_coords(comm2D, myrank, ndims, coord);
+  /* use my coordinates to find my rank in cartesian group*/
+  MPI_Cart_rank(comm2D, coord, &my_cart_rank);
+  // printf("PW[%d]: my_cart_rank PCM[%d], my coords = (%d)\n",
+  // 	 myrank, my_cart_rank, coord[0]);
+
+  //consider dims[0] = X, so the shift tells us our left and right neighbors
+  MPI_Cart_shift( comm2D, 0, 1, &left_rank, &right_rank );
+  //consider dims[1] = Y, so the shift tells us our left and right neighbors
+  MPI_Cart_shift( comm2D, 1, 1, &down_rank, &up_rank );
+  //pritf( "P[%d]: left[%d] P[%d] right[%d] \n", myrank,left,myrank,right );fflush(stdout);
+ 
+  //TODO : 2D decomposition of the mesh!!!!
+  nper = ( (double) nx_glob ) / dims[0];
   i_beg = round( nper* (myrank)    );
   i_end = round( nper*((myrank)+1) )-1;
   nx = i_end - i_beg + 1;
-  int dims[1],coord[1], wrap_around[1];
-  
-  dims[0] = 0;
-  MPI_Dims_create(nranks, 1, dims);
 
-  if( myrank == 0 )
-    printf("PW[%d]/[%d]: PEdims = [%d] \n", myrank, nranks, dims[0]);
-  
-  /* create cartesian mapping */
-  wrap_around[0] = 1; // set periodicity .true.
-  int reorder = 1;
-  MPI_Cart_create(MPI_COMM_WORLD, 1, dims, wrap_around, reorder, &comm1D);
-
-  /* find my coordinates in the cartesian communicator group */
-  MPI_Cart_coords(comm1D, myrank, 1, coord);
-  /* use my coordinates to find my rank in cartesian group*/
-  MPI_Cart_rank(comm1D, coord, &my_cart_rank);
-  // printf("PW[%d]: my_cart_rank PCM[%d], my coords = (%d)\n",
-  // 	 myrank, my_cart_rank, coord[0]);
-  //int left,right;
-  MPI_Cart_shift( comm1D, 0, 1, &left_rank, &right_rank );
-  //intf( "P[%d]: left[%d] P[%d] right[%d] \n", myrank,left,myrank,right );fflush(stdout);
- 
-  // left_rank  = myrank - 1;
-  // if (left_rank == -1) left_rank = nranks-1;
-  // right_rank = myrank + 1;
-  // if (right_rank == nranks) right_rank = 0;
+  nper = ( (double) nz_glob ) / dims[1];
+  k_beg = round( nper* (myrank)    );
+  k_end = round( nper*((myrank)+1) )-1;
+  nz = k_end - k_beg + 1;
   printf( "rank [%d] --> nx = %d,nz = %d\n", myrank,nx,nz );fflush(stdout);
 
+ 
   ////////////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////////////
   // YOU DON'T NEED TO ALTER ANYTHING BELOW THIS POINT IN THE CODE
@@ -627,8 +691,9 @@ void init( int *argc , char ***argv ) {
   ////////////////////////////////////////////////////////////////////////////////
 
   //Vertical direction isn't MPI-ized, so the rank's local values = the global values
-  k_beg = 0;
-  nz = nz_glob;
+  // k_beg = 0;
+  //nz = nz_glob;
+
   masterproc = (myrank == 0);
 
   //Allocate the model data
@@ -645,6 +710,10 @@ void init( int *argc , char ***argv ) {
   sendbuf_r          = (double *) malloc( hs*nz*NUM_VARS*sizeof(double) );
   recvbuf_l          = (double *) malloc( hs*nz*NUM_VARS*sizeof(double) );
   recvbuf_r          = (double *) malloc( hs*nz*NUM_VARS*sizeof(double) );
+  sendbuf_u          = (double *) malloc( hs*nx*NUM_VARS*sizeof(double) );
+  sendbuf_d          = (double *) malloc( hs*nx*NUM_VARS*sizeof(double) );
+  recvbuf_u          = (double *) malloc( hs*nx*NUM_VARS*sizeof(double) );
+  recvbuf_d          = (double *) malloc( hs*nx*NUM_VARS*sizeof(double) );
   //For neighborhood collectives
   sendbuf            = (double *) malloc( 2*hs*nz*NUM_VARS*sizeof(double) );
   recvbuf            = (double *) malloc( 2*hs*nz*NUM_VARS*sizeof(double) );
@@ -892,7 +961,7 @@ void output( double *state , double etime ) {
   //If the elapsed time is zero, create the file. Otherwise, open the file
   if (etime == 0) {
     //Create the file
-    ncwrap( ncmpi_create( comm1D , "output.nc" , NC_CLOBBER , MPI_INFO_NULL , &ncid ) , __LINE__ );
+    ncwrap( ncmpi_create( comm2D , "output.nc" , NC_CLOBBER , MPI_INFO_NULL , &ncid ) , __LINE__ );
     //Create the dimensions
     ncwrap( ncmpi_def_dim( ncid , "t" , (MPI_Offset) NC_UNLIMITED , &t_dimid ) , __LINE__ );
     ncwrap( ncmpi_def_dim( ncid , "x" , (MPI_Offset) nx_glob      , &x_dimid ) , __LINE__ );
@@ -909,7 +978,7 @@ void output( double *state , double etime ) {
     ncwrap( ncmpi_enddef( ncid ) , __LINE__ );
   } else {
     //Open the file
-    ncwrap( ncmpi_open( comm1D , "output.nc" , NC_WRITE , MPI_INFO_NULL , &ncid ) , __LINE__ );
+    ncwrap( ncmpi_open( comm2D , "output.nc" , NC_WRITE , MPI_INFO_NULL , &ncid ) , __LINE__ );
     //Get the variable IDs
     ncwrap( ncmpi_inq_varid( ncid , "dens"  ,  &dens_varid ) , __LINE__ );
     ncwrap( ncmpi_inq_varid( ncid , "uwnd"  ,  &uwnd_varid ) , __LINE__ );
@@ -928,7 +997,8 @@ void output( double *state , double etime ) {
       dens [k*nx+i] = state[ind_r];
       uwnd [k*nx+i] = state[ind_u] / ( hy_dens_cell[k+hs] + state[ind_r] );
       wwnd [k*nx+i] = state[ind_w] / ( hy_dens_cell[k+hs] + state[ind_r] );
-      theta[k*nx+i] = ( state[ind_t] + hy_dens_theta_cell[k+hs] ) / ( hy_dens_cell[k+hs] + state[ind_r] ) - hy_dens_theta_cell[k+hs] / hy_dens_cell[k+hs];
+      theta[k*nx+i] = ( state[ind_t] + hy_dens_theta_cell[k+hs] ) / ( hy_dens_cell[k+hs] + state[ind_r] ) -
+	hy_dens_theta_cell[k+hs] / hy_dens_cell[k+hs];
     }
   }
 
@@ -1023,7 +1093,7 @@ void reductions( double &mass , double &te ) {
   double glob[2], loc[2];
   loc[0] = mass;
   loc[1] = te;
-  int ierr = MPI_Allreduce(loc,glob,2,MPI_DOUBLE,MPI_SUM,comm1D);
+  int ierr = MPI_Allreduce(loc,glob,2,MPI_DOUBLE,MPI_SUM,comm2D);
   mass = glob[0];
   te   = glob[1];
 }
