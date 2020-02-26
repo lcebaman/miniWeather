@@ -1,0 +1,12 @@
+#PBS -l walltime=00:20:00
+#PBS -N mpi
+#PBS -l select=1:ncpus=36
+#PBS -l place=scatter:excl
+#PBS -A z04
+
+cd $PBS_O_WORKDIR
+export OMP_NUM_THREADS=1
+
+mpirun -n 36 -ppn 36  ./miniWeather_mpi
+
+#mpirun -n 144 -ppn 36 amplxe-cl -collect hotspots -result-dir r000hs ./heart_demo -m ../mesh_mid -s ../setup_mid.txt -t 50
