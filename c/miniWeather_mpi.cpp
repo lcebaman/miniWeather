@@ -792,7 +792,8 @@ void output( double *state , double etime ) {
   if (masterproc) {
     st1[0] = num_out;
     ct1[0] = 1;
-    etimearr[0] = etime; ncwrap( ncmpi_put_vara_double( ncid , t_varid , st1 , ct1 , etimearr ) , __LINE__ );
+    etimearr[0] = etime;
+    ncwrap( ncmpi_put_vara_double( ncid , t_varid , st1 , ct1 , etimearr ) , __LINE__ );
   }
   //End "independent" write mode
   ncwrap( ncmpi_end_indep_data(ncid) , __LINE__ );
