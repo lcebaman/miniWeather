@@ -457,16 +457,40 @@ void init( int *argc , char ***argv ) {
 
   ierr = MPI_Comm_size(MPI_COMM_WORLD,&nranks);
   ierr = MPI_Comm_rank(MPI_COMM_WORLD,&myrank);
+
+  // **** MPI decompostion ****
+  
+  int ndims=1;
+  //  int dims[2]= {0,0};
+  int dims[1]= {0};
+  MPI_Dims_create(nranks, ndims, dims);
+  //int periods[2] = {1,0}; // periodic boundaries (yes in X, no in Z)
+  int periods[1] = {1}; // periodic boundaries (yes in X, no in Z)
+  int reorder=0;          // no reordering of processes
+  MPI_Comm newcomm;
+  int left, right, up, down;
+  int distance=1; // we are intersted in the direct //neighbors of each process
+  MPI_Cart_create( MPI_COMM_WORLD, ndims, dims, periods, reorder, &newcomm);
+  // Let consider dims[0] = X, so the shift tells us our left and right neighbours
+  MPI_Cart_shift( newcomm, 0, distance, &left, &right);
+  // Let consider dims[1] = Y, so the shift tells us our up and down neighbours
+  //  MPI_Cart_shift( newcomm, 1, distance, &down, &up);
+
+  
   nper = ( (double) nx_glob ) / nranks;
   i_beg = round( nper* (myrank)    );
   i_end = round( nper*((myrank)+1) )-1;
   nx = i_end - i_beg + 1;
-  left_rank  = myrank - 1;
-  if (left_rank == -1) left_rank = nranks-1;
-  right_rank = myrank + 1;
-  if (right_rank == nranks) right_rank = 0;
+  // left_rank  = myrank - 1;
+  // if (left_rank == -1) left_rank = nranks-1;
+  // right_rank = myrank + 1;
+  // if (right_rank == nranks) right_rank = 0;
 
-
+  // printf("Rank: %d --->> left %d , left_rank =%d --- right %d, right_rank %d\n",
+  // 	 myrank, left, left_rank, right, right_rank);
+  left_rank = left;
+  right_rank = right;
+  
   ////////////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////////////
   // YOU DON'T NEED TO ALTER ANYTHING BELOW THIS POINT IN THE CODE
